@@ -57,11 +57,11 @@ export const info = {
     IsResizable: false,
     IsRotatable: false,
     Is3D: false,
-    HasImage: false,
-    IsTiled: false,
-    SupportsZElevation: false,
-    SupportsColor: false,
-    SupportsEffects: false,
+    HasImage: true,
+    IsTiled: true,
+    SupportsZElevation: true,
+    SupportsColor: true,
+    SupportsEffects: true,
     MustPreDraw: false,
 
     // PLUGIN object only
@@ -69,12 +69,12 @@ export const info = {
   },
   // PLUGIN only
   AddCommonACEs: {
-    Position: false,
-    SceneGraph: false,
-    Size: false,
-    Angle: false,
-    Appearance: false,
-    ZOrder: false,
+    Position: true,
+    SceneGraph: true,
+    Size: true,
+    Angle: true,
+    Appearance: true,
+    ZOrder: true,
   },
 };
 
