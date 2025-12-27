@@ -219,6 +219,59 @@
       let dragging = false;
       let draggingHandle = false;
       let dragOffset = { x: 0, y: 0 };
+      let shiftKey = false;
+      let altKey = false;
+
+      // Helper: Calculate automatic handles for a point based on neighbors
+      function calculateAutoHandles(idx) {
+        const point = points[idx];
+        const prev = points[idx - 1];
+        const next = points[idx + 1];
+
+        if (!prev && !next) {
+          // No neighbors, use default
+          return { handleIn: { x: -80, y: 0 }, handleOut: { x: 80, y: 0 } };
+        } else if (!prev) {
+          // First point, use direction to next
+          const dx = next.x - point.x;
+          const dy = next.y - point.y;
+          const len = Math.sqrt(dx * dx + dy * dy) * 0.3;
+          return {
+            handleIn: { x: 0, y: 0 },
+            handleOut: { x: dx * 0.3, y: dy * 0.3 },
+          };
+        } else if (!next) {
+          // Last point, use direction from prev
+          const dx = point.x - prev.x;
+          const dy = point.y - prev.y;
+          return {
+            handleIn: { x: -dx * 0.3, y: -dy * 0.3 },
+            handleOut: { x: 0, y: 0 },
+          };
+        } else {
+          // Middle point, calculate tangent from neighbors
+          const dx = next.x - prev.x;
+          const dy = next.y - prev.y;
+          const len = Math.sqrt(dx * dx + dy * dy) * 0.3;
+          const normX = dx / Math.sqrt(dx * dx + dy * dy);
+          const normY = dy / Math.sqrt(dx * dx + dy * dy);
+          return {
+            handleIn: { x: -normX * len, y: -normY * len },
+            handleOut: { x: normX * len, y: normY * len },
+          };
+        }
+      }
+
+      // Helper: Check if handles are at point position (collapsed)
+      function handlesCollapsed(point) {
+        const threshold = 0.1;
+        return (
+          Math.abs(point.handleIn.x) < threshold &&
+          Math.abs(point.handleIn.y) < threshold &&
+          Math.abs(point.handleOut.x) < threshold &&
+          Math.abs(point.handleOut.y) < threshold
+        );
+      }
 
       // Add some initial points with auto-calculated tangents
       points.push({
@@ -498,26 +551,37 @@
           // Get the exact position at this t
           const newPoint = evaluateSpline(points, closestT);
 
-          // Insert new point with default handles
+          // Insert new point
           points.splice(insertIdx, 0, {
             x: newPoint.x,
             y: newPoint.y,
             thickness: newPoint.thickness,
-            handleIn: { x: -80, y: 0 },
-            handleOut: { x: 80, y: 0 },
+            handleIn: { x: 0, y: 0 },
+            handleOut: { x: 0, y: 0 },
           });
+
+          // Calculate auto handles for the new point
+          const autoHandles = calculateAutoHandles(insertIdx);
+          points[insertIdx].handleIn = autoHandles.handleIn;
+          points[insertIdx].handleOut = autoHandles.handleOut;
 
           draw();
           updatePointList();
         } else if (pointIdx === -1) {
           // If less than 2 points, just add at the end
+          const newIdx = points.length;
           points.push({
             x: pos.x,
             y: pos.y,
             thickness: 1.0,
-            handleIn: { x: -80, y: 0 },
-            handleOut: { x: 80, y: 0 },
+            handleIn: { x: 0, y: 0 },
+            handleOut: { x: 0, y: 0 },
           });
+
+          // Calculate auto handles
+          const autoHandles = calculateAutoHandles(newIdx);
+          points[newIdx].handleIn = autoHandles.handleIn;
+          points[newIdx].handleOut = autoHandles.handleOut;
           draw();
           updatePointList();
         }
@@ -528,11 +592,29 @@
         const handle = getHandleAt(pos);
         const pointIdx = getPointAt(pos);
 
+        shiftKey = e.shiftKey;
+        altKey = e.altKey;
+
         if (handle) {
           // Start dragging a handle
           draggingHandle = true;
           selectedHandle = handle;
           draw();
+        } else if (pointIdx !== -1 && e.altKey) {
+          // Alt-click on point: toggle between collapsed and auto handles
+          const point = points[pointIdx];
+          if (handlesCollapsed(point)) {
+            // Expand to auto handles
+            const autoHandles = calculateAutoHandles(pointIdx);
+            point.handleIn = autoHandles.handleIn;
+            point.handleOut = autoHandles.handleOut;
+          } else {
+            // Collapse handles
+            point.handleIn = { x: 0, y: 0 };
+            point.handleOut = { x: 0, y: 0 };
+          }
+          draw();
+          updatePointList();
         } else if (pointIdx !== -1) {
           if (e.shiftKey) {
             // Toggle selection
@@ -567,14 +649,46 @@
 
       canvas.addEventListener("mousemove", (e) => {
         const pos = getMousePos(e);
+        shiftKey = e.shiftKey;
+        altKey = e.altKey;
 
         if (draggingHandle && selectedHandle) {
           // Drag handle
           const point = points[selectedHandle.pointIdx];
           const handleKey =
             selectedHandle.type === "in" ? "handleIn" : "handleOut";
-          point[handleKey].x = pos.x - point.x;
-          point[handleKey].y = pos.y - point.y;
+          const oppositeKey =
+            selectedHandle.type === "in" ? "handleOut" : "handleIn";
+
+          let newX = pos.x - point.x;
+          let newY = pos.y - point.y;
+
+          if (e.altKey) {
+            // Alt: constrain to axis (change length only)
+            const currentX = point[handleKey].x;
+            const currentY = point[handleKey].y;
+            const currentLen = Math.sqrt(
+              currentX * currentX + currentY * currentY
+            );
+            const newLen = Math.sqrt(newX * newX + newY * newY);
+
+            if (currentLen > 0.1) {
+              // Maintain direction, change length
+              const scale = newLen / currentLen;
+              newX = currentX * scale;
+              newY = currentY * scale;
+            }
+          }
+
+          point[handleKey].x = newX;
+          point[handleKey].y = newY;
+
+          if (e.shiftKey) {
+            // Shift: mirror to opposite handle
+            point[oppositeKey].x = -newX;
+            point[oppositeKey].y = -newY;
+          }
+
           draw();
         } else if (dragging && selectedPoints.size > 0) {
           const firstIdx = Array.from(selectedPoints)[0];
@@ -594,12 +708,16 @@
         dragging = false;
         draggingHandle = false;
         selectedHandle = null;
+        shiftKey = false;
+        altKey = false;
       });
 
       canvas.addEventListener("mouseleave", () => {
         dragging = false;
         draggingHandle = false;
         selectedHandle = null;
+        shiftKey = false;
+        altKey = false;
       });
 
       // Keyboard handling
