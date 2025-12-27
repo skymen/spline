@@ -262,17 +262,6 @@
         }
       }
 
-      // Helper: Check if handles are at point position (collapsed)
-      function handlesCollapsed(point) {
-        const threshold = 0.1;
-        return (
-          Math.abs(point.handleIn.x) < threshold &&
-          Math.abs(point.handleIn.y) < threshold &&
-          Math.abs(point.handleOut.x) < threshold &&
-          Math.abs(point.handleOut.y) < threshold
-        );
-      }
-
       // Add some initial points with auto-calculated tangents
       points.push({
         x: 200,
@@ -280,6 +269,7 @@
         thickness: 1.0,
         handleIn: { x: -80, y: 0 },
         handleOut: { x: 80, y: 0 },
+        collapsed: false,
       });
       points.push({
         x: 400,
@@ -287,6 +277,7 @@
         thickness: 1.5,
         handleIn: { x: -80, y: 40 },
         handleOut: { x: 80, y: -40 },
+        collapsed: false,
       });
       points.push({
         x: 600,
@@ -294,6 +285,7 @@
         thickness: 0.8,
         handleIn: { x: -80, y: -40 },
         handleOut: { x: 80, y: 40 },
+        collapsed: false,
       });
       points.push({
         x: 800,
@@ -301,6 +293,7 @@
         thickness: 1.2,
         handleIn: { x: -80, y: 0 },
         handleOut: { x: 80, y: 0 },
+        collapsed: false,
       });
 
       // Set canvas size
@@ -558,6 +551,7 @@
             thickness: newPoint.thickness,
             handleIn: { x: 0, y: 0 },
             handleOut: { x: 0, y: 0 },
+            collapsed: false,
           });
 
           // Calculate auto handles for the new point
@@ -576,6 +570,7 @@
             thickness: 1.0,
             handleIn: { x: 0, y: 0 },
             handleOut: { x: 0, y: 0 },
+            collapsed: false,
           });
 
           // Calculate auto handles
@@ -603,15 +598,17 @@
         } else if (pointIdx !== -1 && e.altKey) {
           // Alt-click on point: toggle between collapsed and auto handles
           const point = points[pointIdx];
-          if (handlesCollapsed(point)) {
+          if (point.collapsed) {
             // Expand to auto handles
             const autoHandles = calculateAutoHandles(pointIdx);
             point.handleIn = autoHandles.handleIn;
             point.handleOut = autoHandles.handleOut;
+            point.collapsed = false;
           } else {
             // Collapse handles
             point.handleIn = { x: 0, y: 0 };
             point.handleOut = { x: 0, y: 0 };
+            point.collapsed = true;
           }
           draw();
           updatePointList();
@@ -682,6 +679,9 @@
 
           point[handleKey].x = newX;
           point[handleKey].y = newY;
+
+          // Mark as not collapsed when manually adjusting
+          point.collapsed = false;
 
           if (e.shiftKey) {
             // Shift: mirror to opposite handle
