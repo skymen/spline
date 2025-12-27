@@ -218,9 +218,17 @@
       let selectedHandle = null; // {pointIdx, type: 'in' or 'out'}
       let dragging = false;
       let draggingHandle = false;
+      let draggingCamera = false;
+      let boxSelecting = false;
+      let boxSelectStart = null;
+      let boxSelectEnd = null;
+      let dragStartPoint = null; // Store which point we started dragging
       let dragOffset = { x: 0, y: 0 };
       let shiftKey = false;
       let altKey = false;
+
+      // Camera state
+      let camera = { x: 0, y: 0, zoom: 1 };
 
       // Helper: Calculate automatic handles for a point based on neighbors
       function calculateAutoHandles(idx) {
@@ -348,43 +356,66 @@
       function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        // Apply camera transform
+        ctx.save();
+        ctx.translate(camera.x, camera.y);
+        ctx.scale(camera.zoom, camera.zoom);
+
         if (points.length < 2) {
           // Draw individual points
           points.forEach((point, idx) => {
             drawPoint(point, idx);
           });
-          return;
+        } else {
+          // Draw Catmull-Rom spline curve with variable thickness
+          const segments = 200;
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+
+          for (let i = 0; i < segments; i++) {
+            const t1 = i / segments;
+            const t2 = (i + 1) / segments;
+
+            const p1 = evaluateSpline(points, t1);
+            const p2 = evaluateSpline(points, t2);
+
+            const thickness = ((p1.thickness + p2.thickness) / 2) * 10;
+
+            ctx.beginPath();
+            ctx.strokeStyle = "#00a8ff";
+            ctx.lineWidth = thickness;
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+          }
+
+          // Draw control points and handles
+          points.forEach((point, idx) => {
+            drawHandles(point, idx);
+          });
+          points.forEach((point, idx) => {
+            drawPoint(point, idx);
+          });
         }
 
-        // Draw Catmull-Rom spline curve with variable thickness
-        const segments = 200;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
+        ctx.restore();
 
-        for (let i = 0; i < segments; i++) {
-          const t1 = i / segments;
-          const t2 = (i + 1) / segments;
+        // Draw box selection (in screen space)
+        if (boxSelecting && boxSelectStart && boxSelectEnd) {
+          ctx.strokeStyle = "#007acc";
+          ctx.fillStyle = "rgba(0, 122, 204, 0.1)";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([5, 5]);
 
-          const p1 = evaluateSpline(points, t1);
-          const p2 = evaluateSpline(points, t2);
+          const x = Math.min(boxSelectStart.x, boxSelectEnd.x);
+          const y = Math.min(boxSelectStart.y, boxSelectEnd.y);
+          const w = Math.abs(boxSelectEnd.x - boxSelectStart.x);
+          const h = Math.abs(boxSelectEnd.y - boxSelectStart.y);
 
-          const thickness = ((p1.thickness + p2.thickness) / 2) * 10;
-
-          ctx.beginPath();
-          ctx.strokeStyle = "#00a8ff";
-          ctx.lineWidth = thickness;
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.stroke();
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeRect(x, y, w, h);
+          ctx.setLineDash([]);
         }
-
-        // Draw control points and handles
-        points.forEach((point, idx) => {
-          drawHandles(point, idx);
-        });
-        points.forEach((point, idx) => {
-          drawPoint(point, idx);
-        });
       }
 
       function drawHandles(point, idx) {
@@ -465,6 +496,14 @@
 
       // Mouse handling
       function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: (e.clientX - rect.left - camera.x) / camera.zoom,
+          y: (e.clientY - rect.top - camera.y) / camera.zoom,
+        };
+      }
+
+      function getMousePosScreen(e) {
         const rect = canvas.getBoundingClientRect();
         return {
           x: e.clientX - rect.left,
@@ -584,11 +623,20 @@
 
       canvas.addEventListener("mousedown", (e) => {
         const pos = getMousePos(e);
+        const screenPos = getMousePosScreen(e);
         const handle = getHandleAt(pos);
         const pointIdx = getPointAt(pos);
 
         shiftKey = e.shiftKey;
         altKey = e.altKey;
+
+        // Middle mouse button for camera pan
+        if (e.button === 1) {
+          e.preventDefault();
+          draggingCamera = true;
+          dragOffset = { x: screenPos.x - camera.x, y: screenPos.y - camera.y };
+          return;
+        }
 
         if (handle) {
           // Start dragging a handle
@@ -628,6 +676,7 @@
           }
 
           dragging = true;
+          dragStartPoint = pointIdx; // Track which point we clicked on
           dragOffset = {
             x: pos.x - points[pointIdx].x,
             y: pos.y - points[pointIdx].y,
@@ -637,7 +686,11 @@
           updateControls();
           updatePointList();
         } else if (!e.shiftKey) {
+          // Start box selection
           selectedPoints.clear();
+          boxSelecting = true;
+          boxSelectStart = screenPos;
+          boxSelectEnd = screenPos;
           draw();
           updateControls();
           updatePointList();
@@ -646,10 +699,43 @@
 
       canvas.addEventListener("mousemove", (e) => {
         const pos = getMousePos(e);
+        const screenPos = getMousePosScreen(e);
         shiftKey = e.shiftKey;
         altKey = e.altKey;
 
-        if (draggingHandle && selectedHandle) {
+        if (draggingCamera) {
+          // Pan camera
+          camera.x = screenPos.x - dragOffset.x;
+          camera.y = screenPos.y - dragOffset.y;
+          draw();
+        } else if (boxSelecting) {
+          // Update box selection
+          boxSelectEnd = screenPos;
+
+          // Select points within box
+          selectedPoints.clear();
+          const minX = Math.min(boxSelectStart.x, boxSelectEnd.x);
+          const maxX = Math.max(boxSelectStart.x, boxSelectEnd.x);
+          const minY = Math.min(boxSelectStart.y, boxSelectEnd.y);
+          const maxY = Math.max(boxSelectStart.y, boxSelectEnd.y);
+
+          points.forEach((point, idx) => {
+            const screenX = point.x * camera.zoom + camera.x;
+            const screenY = point.y * camera.zoom + camera.y;
+            if (
+              screenX >= minX &&
+              screenX <= maxX &&
+              screenY >= minY &&
+              screenY <= maxY
+            ) {
+              selectedPoints.add(idx);
+            }
+          });
+
+          draw();
+          updateControls();
+          updatePointList();
+        } else if (draggingHandle && selectedHandle) {
           // Drag handle
           const point = points[selectedHandle.pointIdx];
           const handleKey =
@@ -690,10 +776,14 @@
           }
 
           draw();
-        } else if (dragging && selectedPoints.size > 0) {
-          const firstIdx = Array.from(selectedPoints)[0];
-          const dx = pos.x - dragOffset.x - points[firstIdx].x;
-          const dy = pos.y - dragOffset.y - points[firstIdx].y;
+        } else if (
+          dragging &&
+          selectedPoints.size > 0 &&
+          dragStartPoint !== null
+        ) {
+          // Use the point we started dragging on for offset calculation
+          const dx = pos.x - dragOffset.x - points[dragStartPoint].x;
+          const dy = pos.y - dragOffset.y - points[dragStartPoint].y;
 
           selectedPoints.forEach((idx) => {
             points[idx].x += dx;
@@ -707,18 +797,69 @@
       canvas.addEventListener("mouseup", () => {
         dragging = false;
         draggingHandle = false;
+        draggingCamera = false;
+        boxSelecting = false;
+        boxSelectStart = null;
+        boxSelectEnd = null;
+        dragStartPoint = null;
         selectedHandle = null;
         shiftKey = false;
         altKey = false;
+        draw();
       });
 
       canvas.addEventListener("mouseleave", () => {
         dragging = false;
         draggingHandle = false;
+        draggingCamera = false;
+        boxSelecting = false;
+        boxSelectStart = null;
+        boxSelectEnd = null;
+        dragStartPoint = null;
         selectedHandle = null;
         shiftKey = false;
         altKey = false;
+        draw();
       });
+
+      // Prevent context menu on middle click
+      canvas.addEventListener("contextmenu", (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+        }
+      });
+
+      // Zoom with Ctrl+Wheel
+      canvas.addEventListener(
+        "wheel",
+        (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+
+            const mousePos = getMousePosScreen(e);
+            const worldPosBefore = {
+              x: (mousePos.x - camera.x) / camera.zoom,
+              y: (mousePos.y - camera.y) / camera.zoom,
+            };
+
+            // Zoom in/out
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            camera.zoom = Math.max(0.1, Math.min(10, camera.zoom * zoomFactor));
+
+            // Adjust camera position to zoom towards mouse
+            const worldPosAfter = {
+              x: (mousePos.x - camera.x) / camera.zoom,
+              y: (mousePos.y - camera.y) / camera.zoom,
+            };
+
+            camera.x += (worldPosAfter.x - worldPosBefore.x) * camera.zoom;
+            camera.y += (worldPosAfter.y - worldPosBefore.y) * camera.zoom;
+
+            draw();
+          }
+        },
+        { passive: false }
+      );
 
       // Keyboard handling
       document.addEventListener("keydown", (e) => {
