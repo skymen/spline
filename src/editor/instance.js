@@ -2,60 +2,26 @@ export default function (instanceClass) {
   return class extends instanceClass {
     constructor(sdkType, inst) {
       super(sdkType, inst);
-      this._mouseLayoutX = 0;
-      this._mouseLayoutY = 0;
-      this._currentLayoutName = null;
+      this._layoutView = null;
     }
 
     Release() {
-      if (this._mouseMoveHandler) {
-        document.removeEventListener("mousemove", this._mouseMoveHandler);
-        this._mouseMoveHandler = null;
-      }
+      // Unregister from type's mouse tracking
+      this._sdkType.UnregisterMouseListener();
     }
 
     OnCreate() {
-      this._currentLayoutName = this._inst.GetLayout().GetName();
-      // Track mouse position relative to the specific layout pane
-      this._mouseMoveHandler = (e) => {
-        if (!this._currentLayoutName) {
-          this._mouseLayoutX = e.clientX;
-          this._mouseLayoutY = e.clientY;
-          return;
-        }
-
-        // Find the .layoutViewPane that contains a .pane-caption-text with the layout name
-        const layoutPanes = document.querySelectorAll(".layoutViewPane");
-        let targetPane = null;
-
-        for (const pane of layoutPanes) {
-          const captionText = pane.querySelector(".pane-caption-text");
-          if (
-            captionText &&
-            captionText.textContent.trim() === this._currentLayoutName
-          ) {
-            targetPane = pane.querySelector(".layoutView");
-            break;
-          }
-
-          // Update current layout name for mouse tracking
-        }
-
-        if (targetPane) {
-          const rect = targetPane.getBoundingClientRect();
-          this._mouseLayoutX = e.clientX - rect.left;
-          this._mouseLayoutY = e.clientY - rect.top;
-        } else {
-          this._mouseLayoutX = e.clientX;
-          this._mouseLayoutY = e.clientY;
-        }
-      };
-      document.addEventListener("mousemove", this._mouseMoveHandler);
+      // Register with type's mouse tracking
+      this._sdkType.RegisterMouseListener();
     }
 
     Draw(iRenderer, iDrawParams) {
       const texture = this.GetTexture();
       const layoutView = iDrawParams.GetLayoutView();
+      this._layoutView = layoutView;
+
+      // Get mouse position relative to this instance's layout view
+      const mousePos = this.GetLocalMousePosition();
 
       // Get quad and convert to device coordinates
       const quad = this._inst.GetQuad();
@@ -69,16 +35,12 @@ export default function (instanceClass) {
       const bly = layoutView.LayoutToClientDeviceY(quad.getBly());
 
       // Check if mouse is inside the quad
-      const isMouseInside = this.IsPointInQuad(
-        this._mouseLayoutX,
-        this._mouseLayoutY,
-        [
-          [tlx, tly],
-          [trx, try_],
-          [brx, bry],
-          [blx, bly],
-        ]
-      );
+      const isMouseInside = this.IsPointInQuad(mousePos.x, mousePos.y, [
+        [tlx, tly],
+        [trx, try_],
+        [brx, bry],
+        [blx, bly],
+      ]);
 
       if (texture) {
         this._inst.ApplyBlendMode(iRenderer);
@@ -113,14 +75,14 @@ export default function (instanceClass) {
 
       const squareSize = 10;
       iRenderer.Quad2(
-        this._mouseLayoutX - squareSize,
-        this._mouseLayoutY - squareSize,
-        this._mouseLayoutX + squareSize,
-        this._mouseLayoutY - squareSize,
-        this._mouseLayoutX + squareSize,
-        this._mouseLayoutY + squareSize,
-        this._mouseLayoutX - squareSize,
-        this._mouseLayoutY + squareSize
+        mousePos.x - squareSize,
+        mousePos.y - squareSize,
+        mousePos.x + squareSize,
+        mousePos.y - squareSize,
+        mousePos.x + squareSize,
+        mousePos.y + squareSize,
+        mousePos.x - squareSize,
+        mousePos.y + squareSize
       );
 
       layoutView.SetDefaultTransform(iRenderer);
@@ -165,6 +127,41 @@ export default function (instanceClass) {
     }
 
     OnPropertyChanged(id, value) {}
+
+    // Get mouse position relative to this instance's layout view
+    GetLocalMousePosition() {
+      const objectType = this._sdkType;
+      const mouseX = objectType.GetMouseX();
+      const mouseY = objectType.GetMouseY();
+
+      if (!this._layoutView) {
+        return { x: mouseX, y: mouseY };
+      }
+
+      const layoutName = this._layoutView.GetLayout().GetName();
+
+      // Find the .layoutViewPane that contains a .pane-caption-text with the layout name
+      const layoutPanes = document.querySelectorAll(".layoutViewPane");
+      let targetPane = null;
+
+      for (const pane of layoutPanes) {
+        const captionText = pane.querySelector(".pane-caption-text");
+        if (captionText && captionText.textContent.trim() === layoutName) {
+          targetPane = pane.querySelector(".layoutView");
+          break;
+        }
+      }
+
+      if (targetPane) {
+        const rect = targetPane.getBoundingClientRect();
+        return {
+          x: mouseX - rect.left,
+          y: mouseY - rect.top,
+        };
+      }
+
+      return { x: mouseX, y: mouseY };
+    }
 
     // Helper method to check if a point is inside a quad
     IsPointInQuad(x, y, vertices) {
