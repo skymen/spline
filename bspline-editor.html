@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Catmull-Rom Spline Editor</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: #1e1e1e;
+        color: #e0e0e0;
+        overflow: hidden;
+      }
+
+      #container {
+        display: flex;
+        height: 100vh;
+      }
+
+      #canvas {
+        flex: 1;
+        min-width: 0;
+        cursor: crosshair;
+        background: #252526;
+      }
+
+      #sidebar {
+        width: 350px;
+        flex-shrink: 0;
+        background: #2d2d30;
+        padding: 20px;
+        overflow-y: auto;
+        border-left: 1px solid #3e3e42;
+      }
+
+      h2 {
+        font-size: 18px;
+        margin-bottom: 15px;
+        color: #ffffff;
+      }
+
+      .controls {
+        margin-bottom: 25px;
+      }
+
+      .control-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        margin-bottom: 5px;
+        color: #cccccc;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 4px;
+        background: #3e3e42;
+        outline: none;
+        border-radius: 2px;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        background: #007acc;
+        cursor: pointer;
+        border-radius: 50%;
+      }
+
+      input[type="range"]::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        background: #007acc;
+        cursor: pointer;
+        border-radius: 50%;
+        border: none;
+      }
+
+      .value-display {
+        display: inline-block;
+        float: right;
+        color: #007acc;
+        font-weight: bold;
+      }
+
+      button {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: #0e639c;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.2s;
+      }
+
+      button:hover {
+        background: #1177bb;
+      }
+
+      button:active {
+        background: #0d5a8f;
+      }
+
+      .info {
+        font-size: 11px;
+        color: #858585;
+        line-height: 1.5;
+        margin-top: 20px;
+      }
+
+      .point-list {
+        max-height: 200px;
+        overflow-y: auto;
+        margin-top: 10px;
+      }
+
+      .point-item {
+        padding: 8px;
+        margin-bottom: 5px;
+        background: #3e3e42;
+        border-radius: 3px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .point-item:hover {
+        background: #4e4e52;
+      }
+
+      .point-item.selected {
+        background: #007acc;
+        color: white;
+      }
+
+      .no-points {
+        padding: 20px;
+        text-align: center;
+        color: #858585;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <canvas id="canvas"></canvas>
+      <div id="sidebar">
+        <h2>Catmull-Rom Spline Editor</h2>
+
+        <div class="controls">
+          <h3 style="font-size: 14px; margin-bottom: 10px">Selected Points</h3>
+          <div class="control-group">
+            <label>
+              Thickness Multiplier
+              <span class="value-display" id="thicknessValue">1.0</span>
+            </label>
+            <input
+              type="range"
+              id="thicknessSlider"
+              min="0.1"
+              max="3"
+              step="0.1"
+              value="1"
+              disabled
+            />
+          </div>
+
+          <button id="deleteBtn" disabled>Delete Selected Points</button>
+          <button id="clearBtn">Clear All Points</button>
+        </div>
+
+        <div class="controls">
+          <h3 style="font-size: 14px; margin-bottom: 10px">Points</h3>
+          <div id="pointList" class="point-list">
+            <div class="no-points">
+              No points yet. Double-click to add points.
+            </div>
+          </div>
+        </div>
+
+        <div class="info">
+          <strong>Controls:</strong><br />
+          • Double-click to add point<br />
+          • Click to select point<br />
+          • Shift+Click for multiple selection<br />
+          • Drag to move selected points<br />
+          • Delete key to remove selected
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const thicknessSlider = document.getElementById("thicknessSlider");
+      const thicknessValue = document.getElementById("thicknessValue");
+      const deleteBtn = document.getElementById("deleteBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const pointList = document.getElementById("pointList");
+
+      // Spline state
+      const points = [];
+      let selectedPoints = new Set();
+      let selectedHandle = null; // {pointIdx, type: 'in' or 'out'}
+      let dragging = false;
+      let draggingHandle = false;
+      let dragOffset = { x: 0, y: 0 };
+
+      // Add some initial points with auto-calculated tangents
+      points.push({
+        x: 200,
+        y: 300,
+        thickness: 1.0,
+        handleIn: { x: -80, y: 0 },
+        handleOut: { x: 80, y: 0 },
+      });
+      points.push({
+        x: 400,
+        y: 200,
+        thickness: 1.5,
+        handleIn: { x: -80, y: 40 },
+        handleOut: { x: 80, y: -40 },
+      });
+      points.push({
+        x: 600,
+        y: 400,
+        thickness: 0.8,
+        handleIn: { x: -80, y: -40 },
+        handleOut: { x: 80, y: 40 },
+      });
+      points.push({
+        x: 800,
+        y: 300,
+        thickness: 1.2,
+        handleIn: { x: -80, y: 0 },
+        handleOut: { x: 80, y: 0 },
+      });
+
+      // Set canvas size
+      function resizeCanvas() {
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+        draw();
+      }
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+
+      // Hermite spline with manual tangents
+      function hermite(p0, p1, m0, m1, t) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+
+        const h00 = 2 * t3 - 3 * t2 + 1;
+        const h10 = t3 - 2 * t2 + t;
+        const h01 = -2 * t3 + 3 * t2;
+        const h11 = t3 - t2;
+
+        return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+      }
+
+      function evaluateSpline(points, t) {
+        const n = points.length;
+        if (n < 2) return points[0] || { x: 0, y: 0, thickness: 1 };
+
+        // Map t from [0, 1] to segment index and local t
+        const segmentCount = n - 1;
+        const scaledT = t * segmentCount;
+        const segment = Math.min(Math.floor(scaledT), segmentCount - 1);
+        const localT = scaledT - segment;
+
+        const p1 = points[segment];
+        const p2 = points[segment + 1];
+
+        // Use the handleOut of p1 and handleIn of p2
+        const m0x = p1.handleOut.x;
+        const m0y = p1.handleOut.y;
+        const m1x = -p2.handleIn.x; // Negate because it points inward
+        const m1y = -p2.handleIn.y;
+
+        return {
+          x: hermite(p1.x, p2.x, m0x, m1x, localT),
+          y: hermite(p1.y, p2.y, m0y, m1y, localT),
+          thickness: hermite(p1.thickness, p2.thickness, 0, 0, localT),
+        };
+      }
+
+      // Drawing
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (points.length < 2) {
+          // Draw individual points
+          points.forEach((point, idx) => {
+            drawPoint(point, idx);
+          });
+          return;
+        }
+
+        // Draw Catmull-Rom spline curve with variable thickness
+        const segments = 200;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        for (let i = 0; i < segments; i++) {
+          const t1 = i / segments;
+          const t2 = (i + 1) / segments;
+
+          const p1 = evaluateSpline(points, t1);
+          const p2 = evaluateSpline(points, t2);
+
+          const thickness = ((p1.thickness + p2.thickness) / 2) * 10;
+
+          ctx.beginPath();
+          ctx.strokeStyle = "#00a8ff";
+          ctx.lineWidth = thickness;
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        }
+
+        // Draw control points and handles
+        points.forEach((point, idx) => {
+          drawHandles(point, idx);
+        });
+        points.forEach((point, idx) => {
+          drawPoint(point, idx);
+        });
+      }
+
+      function drawHandles(point, idx) {
+        const isSelected = selectedPoints.has(idx);
+        if (!isSelected) return;
+
+        // Draw handle lines
+        ctx.beginPath();
+        ctx.strokeStyle = "#888888";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+
+        // In handle
+        ctx.moveTo(point.x, point.y);
+        ctx.lineTo(point.x + point.handleIn.x, point.y + point.handleIn.y);
+
+        // Out handle
+        ctx.moveTo(point.x, point.y);
+        ctx.lineTo(point.x + point.handleOut.x, point.y + point.handleOut.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw handle circles
+        const handleRadius = 5;
+
+        // In handle
+        ctx.beginPath();
+        ctx.arc(
+          point.x + point.handleIn.x,
+          point.y + point.handleIn.y,
+          handleRadius,
+          0,
+          Math.PI * 2
+        );
+        ctx.fillStyle = "#ff6b6b";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Out handle
+        ctx.beginPath();
+        ctx.arc(
+          point.x + point.handleOut.x,
+          point.y + point.handleOut.y,
+          handleRadius,
+          0,
+          Math.PI * 2
+        );
+        ctx.fillStyle = "#4CAF50";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      function drawPoint(point, idx) {
+        const isSelected = selectedPoints.has(idx);
+        const baseRadius = 8;
+        const radius = baseRadius * point.thickness;
+
+        // Point circle
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = isSelected ? "#ff6b6b" : "#ffffff";
+        ctx.fill();
+        ctx.strokeStyle = isSelected ? "#ff0000" : "#00a8ff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Point index
+        ctx.fillStyle = "#000000";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(idx, point.x, point.y);
+      }
+
+      // Mouse handling
+      function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+      }
+
+      function getPointAt(pos) {
+        for (let i = points.length - 1; i >= 0; i--) {
+          const point = points[i];
+          const radius = 8 * point.thickness;
+          const dx = pos.x - point.x;
+          const dy = pos.y - point.y;
+          if (dx * dx + dy * dy <= radius * radius) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      function getHandleAt(pos) {
+        const handleRadius = 5;
+        for (let i = points.length - 1; i >= 0; i--) {
+          if (!selectedPoints.has(i)) continue;
+
+          const point = points[i];
+
+          // Check in handle
+          const inX = point.x + point.handleIn.x;
+          const inY = point.y + point.handleIn.y;
+          let dx = pos.x - inX;
+          let dy = pos.y - inY;
+          if (dx * dx + dy * dy <= handleRadius * handleRadius) {
+            return { pointIdx: i, type: "in" };
+          }
+
+          // Check out handle
+          const outX = point.x + point.handleOut.x;
+          const outY = point.y + point.handleOut.y;
+          dx = pos.x - outX;
+          dy = pos.y - outY;
+          if (dx * dx + dy * dy <= handleRadius * handleRadius) {
+            return { pointIdx: i, type: "out" };
+          }
+        }
+        return null;
+      }
+
+      canvas.addEventListener("dblclick", (e) => {
+        const pos = getMousePos(e);
+        const pointIdx = getPointAt(pos);
+
+        if (pointIdx === -1 && points.length >= 2) {
+          // Find closest point on curve
+          let closestT = 0;
+          let closestDist = Infinity;
+          const samples = 100;
+
+          for (let i = 0; i <= samples; i++) {
+            const t = i / samples;
+            const p = evaluateSpline(points, t);
+            const dx = pos.x - p.x;
+            const dy = pos.y - p.y;
+            const dist = dx * dx + dy * dy;
+
+            if (dist < closestDist) {
+              closestDist = dist;
+              closestT = t;
+            }
+          }
+
+          // Find which segment this t belongs to
+          const segmentCount = points.length - 1;
+          const scaledT = closestT * segmentCount;
+          const insertIdx = Math.ceil(scaledT);
+
+          // Get the exact position at this t
+          const newPoint = evaluateSpline(points, closestT);
+
+          // Insert new point with default handles
+          points.splice(insertIdx, 0, {
+            x: newPoint.x,
+            y: newPoint.y,
+            thickness: newPoint.thickness,
+            handleIn: { x: -80, y: 0 },
+            handleOut: { x: 80, y: 0 },
+          });
+
+          draw();
+          updatePointList();
+        } else if (pointIdx === -1) {
+          // If less than 2 points, just add at the end
+          points.push({
+            x: pos.x,
+            y: pos.y,
+            thickness: 1.0,
+            handleIn: { x: -80, y: 0 },
+            handleOut: { x: 80, y: 0 },
+          });
+          draw();
+          updatePointList();
+        }
+      });
+
+      canvas.addEventListener("mousedown", (e) => {
+        const pos = getMousePos(e);
+        const handle = getHandleAt(pos);
+        const pointIdx = getPointAt(pos);
+
+        if (handle) {
+          // Start dragging a handle
+          draggingHandle = true;
+          selectedHandle = handle;
+          draw();
+        } else if (pointIdx !== -1) {
+          if (e.shiftKey) {
+            // Toggle selection
+            if (selectedPoints.has(pointIdx)) {
+              selectedPoints.delete(pointIdx);
+            } else {
+              selectedPoints.add(pointIdx);
+            }
+          } else {
+            if (!selectedPoints.has(pointIdx)) {
+              selectedPoints.clear();
+              selectedPoints.add(pointIdx);
+            }
+          }
+
+          dragging = true;
+          dragOffset = {
+            x: pos.x - points[pointIdx].x,
+            y: pos.y - points[pointIdx].y,
+          };
+
+          draw();
+          updateControls();
+          updatePointList();
+        } else if (!e.shiftKey) {
+          selectedPoints.clear();
+          draw();
+          updateControls();
+          updatePointList();
+        }
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        const pos = getMousePos(e);
+
+        if (draggingHandle && selectedHandle) {
+          // Drag handle
+          const point = points[selectedHandle.pointIdx];
+          const handleKey =
+            selectedHandle.type === "in" ? "handleIn" : "handleOut";
+          point[handleKey].x = pos.x - point.x;
+          point[handleKey].y = pos.y - point.y;
+          draw();
+        } else if (dragging && selectedPoints.size > 0) {
+          const firstIdx = Array.from(selectedPoints)[0];
+          const dx = pos.x - dragOffset.x - points[firstIdx].x;
+          const dy = pos.y - dragOffset.y - points[firstIdx].y;
+
+          selectedPoints.forEach((idx) => {
+            points[idx].x += dx;
+            points[idx].y += dy;
+          });
+
+          draw();
+        }
+      });
+
+      canvas.addEventListener("mouseup", () => {
+        dragging = false;
+        draggingHandle = false;
+        selectedHandle = null;
+      });
+
+      canvas.addEventListener("mouseleave", () => {
+        dragging = false;
+        draggingHandle = false;
+        selectedHandle = null;
+      });
+
+      // Keyboard handling
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Delete" || e.key === "Backspace") {
+          deleteSelectedPoints();
+        }
+      });
+
+      // Controls
+      function updateControls() {
+        const hasSelection = selectedPoints.size > 0;
+        thicknessSlider.disabled = !hasSelection;
+        deleteBtn.disabled = !hasSelection;
+
+        if (hasSelection) {
+          const avgThickness =
+            Array.from(selectedPoints).reduce(
+              (sum, idx) => sum + points[idx].thickness,
+              0
+            ) / selectedPoints.size;
+
+          thicknessSlider.value = avgThickness;
+          thicknessValue.textContent = avgThickness.toFixed(1);
+        }
+      }
+
+      thicknessSlider.addEventListener("input", (e) => {
+        const value = parseFloat(e.target.value);
+        thicknessValue.textContent = value.toFixed(1);
+        selectedPoints.forEach((idx) => {
+          points[idx].thickness = value;
+        });
+        draw();
+        updatePointList();
+      });
+
+      function deleteSelectedPoints() {
+        if (selectedPoints.size === 0) return;
+
+        const sorted = Array.from(selectedPoints).sort((a, b) => b - a);
+        sorted.forEach((idx) => points.splice(idx, 1));
+        selectedPoints.clear();
+
+        draw();
+        updateControls();
+        updatePointList();
+      }
+
+      deleteBtn.addEventListener("click", deleteSelectedPoints);
+
+      clearBtn.addEventListener("click", () => {
+        if (confirm("Clear all points?")) {
+          points.length = 0;
+          selectedPoints.clear();
+          draw();
+          updateControls();
+          updatePointList();
+        }
+      });
+
+      // Point list
+      function updatePointList() {
+        if (points.length === 0) {
+          pointList.innerHTML =
+            '<div class="no-points">No points yet. Double-click to add points.</div>';
+          return;
+        }
+
+        pointList.innerHTML = "";
+        points.forEach((point, idx) => {
+          const div = document.createElement("div");
+          div.className =
+            "point-item" + (selectedPoints.has(idx) ? " selected" : "");
+          div.textContent = `Point ${idx}: Thickness=${point.thickness.toFixed(
+            1
+          )}`;
+          div.addEventListener("click", (e) => {
+            if (e.shiftKey) {
+              if (selectedPoints.has(idx)) {
+                selectedPoints.delete(idx);
+              } else {
+                selectedPoints.add(idx);
+              }
+            } else {
+              selectedPoints.clear();
+              selectedPoints.add(idx);
+            }
+            draw();
+            updateControls();
+            updatePointList();
+          });
+          pointList.appendChild(div);
+        });
+      }
+
+      // Initial render
+      updateControls();
+      updatePointList();
+      draw();
+    </script>
+  </body>
+</html>
