@@ -1,11 +1,11 @@
 {
   "languageTag": "en-US",
-  "fileDescription": "Strings for sample_addon.",
+  "fileDescription": "Strings for skymen_spline.",
   "text": {
     "plugins": {
-      "sample_addon": {
-        "name": "Sample Addon",
-        "description": "Description",
+      "skymen_spline": {
+        "name": "Spline",
+        "description": "-",
         "help-url": "https://www.construct.net",
         "aceCategories": {
           "Ace_Folders_In_Category_Folder": "Ace_Folders_In_Category_Folder",
